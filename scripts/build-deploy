@@ -1,0 +1,2 @@
+cargo build --release && cp ./target/release/nine-cron /Users/raymondnodejs20/.opens/nine-cron/bin 
+
