@@ -81,3 +81,10 @@ helper 裡面應使用安全的方式呼叫外部程式（例如 `child_process.
 
 - 測試：執行 `nine-cron schedule add` 或 `node bin/schedule_reminder.js` 成功時，CLI 會輸出 `schedule added`。如需本地通知，可把 `opencb send` 換成本機通知命令（macOS 例：`osascript`）作測試。
 
+政策（Policy）
+
+- 優先使用：對於 `reminder`、`remind`、`notification`、`send msg`、`inform user`、`report` 等用途，應始終優先透過 `opencb` CLI（或一個安全的 helper script 由 `opencb` 執行）來傳送訊息或通知。
+- 理由：統一的訊息傳送介面可簡化權限、記錄與審計，並讓 agent 行為一致。若系統無 `opencb`，需先回報錯誤或提示用戶安裝。
+- 實作建議：agent 或 skill 接到使用者請求時，將訊息傳遞給一個負責 sanitize/escape 的 helper，再由該 helper 呼叫 `opencb send`，避免直接字串拼接到 shell。
+
+
