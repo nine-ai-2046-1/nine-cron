@@ -1,10 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use directories::ProjectDirs;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 use anyhow;
+
+pub fn generate_id() -> String {
+    Uuid::new_v4().to_string().replace('-', "")
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ScheduleEntry {
     pub id: String,
@@ -20,12 +24,32 @@ pub struct ScheduleEntry {
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct ScheduleFile { pub schedules: Vec<ScheduleEntry> }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ChatConfig {
+    pub model: String,
+}
+
+impl Default for ChatConfig {
+    fn default() -> Self {
+        Self {
+            model: "NineGemini3Flash".to_string(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct AppConfig {
+    #[serde(default)]
+    pub chat: ChatConfig,
+}
+
 fn config_path() -> anyhow::Result<PathBuf> {
-    let proj = ProjectDirs::from("com", "example", "nine-cron")
-        .ok_or_else(|| anyhow::anyhow!("cannot determine config dir"))?;
-    let dir = proj.config_dir();
-    fs::create_dir_all(dir)?;
-    Ok(dir.join("schedules.toml"))
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| anyhow::anyhow!("cannot determine home directory"))?;
+    let dir = PathBuf::from(home).join(".config").join("nine-cron");
+    fs::create_dir_all(&dir)?;
+    Ok(dir.join("schedulers.toml"))
 }
 
 pub fn load_schedules() -> anyhow::Result<ScheduleFile> {
@@ -54,7 +78,7 @@ pub fn load_schedules() -> anyhow::Result<ScheduleFile> {
                         continue;
                     }
                     // id
-                    let id = tbl.get("id").and_then(|x| x.as_str()).map(|s| s.to_string()).unwrap_or_else(|| Uuid::new_v4().to_string());
+                    let id = tbl.get("id").and_then(|x| x.as_str()).map(|s| s.to_string()).unwrap_or_else(generate_id);
                     // cmd may be string or array
                     let cmd = match tbl.get("cmd") {
                         Some(vv) => {
@@ -81,7 +105,7 @@ pub fn load_schedules() -> anyhow::Result<ScheduleFile> {
             }
             if !skipped.is_empty() {
                 eprintln!("warning: {} schedule(s) in {} were not migrated because they are missing a title. IDs: {:?}", skipped.len(), path.display(), skipped);
-                eprintln!("Please re-add those schedules using: nine-cron schedule add -T \"TITLE\" <args> or edit the schedules.toml manually.");
+                eprintln!("Please re-add those schedules using: nine-cron schedule add -T \"TITLE\" <args> or edit the schedulers.toml manually at {}.", path.display());
             }
             Ok(new)
         }
@@ -95,10 +119,46 @@ pub fn save_schedules(file: &ScheduleFile) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn load_chat_config() -> anyhow::Result<ChatConfig> {
+    let path = config_path()?;
+    if !path.exists() {
+        let default_config = AppConfig::default();
+        let tom = toml::to_string_pretty(&default_config)?;
+        fs::write(&path, tom)?;
+        return Ok(default_config.chat);
+    }
+
+    let s = fs::read_to_string(&path)?;
+    match toml::from_str::<AppConfig>(&s) {
+        Ok(config) => Ok(config.chat),
+        Err(_e) => {
+            // If parsing fails, try to read just the chat section
+            let v: toml::Value = toml::from_str(&s).map_err(|e| anyhow::anyhow!(e))?;
+            let chat = v.get("chat").cloned().unwrap_or_else(|| {
+                let mut table = toml::value::Table::new();
+                table.insert("model".to_string(), toml::Value::String("NineGemini3Flash".to_string()));
+                toml::Value::Table(table)
+            });
+
+            // If chat section was missing, add it to the file
+            if v.get("chat").is_none() {
+                let mut full: toml::Value = toml::from_str(&s).unwrap_or_else(|_| toml::Value::Table(toml::value::Table::new()));
+                full.as_table_mut().unwrap().insert("chat".to_string(), chat.clone());
+                let new_toml = toml::to_string_pretty(&full)?;
+                fs::write(&path, new_toml)?;
+            }
+
+            let config: AppConfig = toml::from_str(&toml::to_string(&chat)?)?;
+            Ok(config.chat)
+        }
+    }
+}
+
 pub fn runs_dir() -> anyhow::Result<std::path::PathBuf> {
-    let proj = ProjectDirs::from("com", "example", "nine-cron")
-        .ok_or_else(|| anyhow::anyhow!("cannot determine config dir"))?;
-    let dir = proj.data_dir().join("runs");
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map_err(|_| anyhow::anyhow!("cannot determine home directory"))?;
+    let dir = PathBuf::from(home).join(".local").join("share").join("nine-cron").join("runs");
     fs::create_dir_all(&dir)?;
     Ok(dir)
 }

@@ -6,6 +6,7 @@ Features
 - Schedule one-off or recurring tasks with flexible recurrence tokens (s,m,h,d,w,mo) and relative offsets (+6m, +1h30m).
 - Run a scheduler daemon to auto-trigger due tasks.
 - Persist schedules in a TOML file under your OS config directory.
+- Schedule IDs are alphanumeric (no hyphens) for easy copy/paste.
 
 When To Use
 
@@ -60,6 +61,24 @@ Quickstart
 ./target/release/nine-cron daemon -i 5
 ```
 
+ - Remove a schedule by ID:
+
+```bash
+./target/release/nine-cron schedule remove <id>
+```
+
+ - Remove all schedules (with confirmation):
+
+```bash
+./target/release/nine-cron schedule remove --all
+```
+
+ - Remove all schedules without confirmation:
+
+```bash
+./target/release/nine-cron schedule remove --all -y
+```
+
 Daemon behaviour and logs
 
 - The daemon runs a polling loop and executes scheduled jobs when due. It does not continuously print per-job logs to stdout. This avoids noisy console output when running as a background service.
@@ -72,7 +91,7 @@ The CLI streams structured log lines as NLJSON. Each stdout/stderr line is emitt
 
 Config and runs location
 
-- Schedules stored in: OS config dir for project `nine-cron` (example on Linux: `~/.config/nine-cron/schedules.toml`).
+- Schedules stored in: `~/.config/nine-cron/schedulers.toml` (all platforms)
 - Per-run logs stored in the data dir under `runs/` (example: `~/.local/share/nine-cron/runs/<run_id>.log`).
 
 Contributing

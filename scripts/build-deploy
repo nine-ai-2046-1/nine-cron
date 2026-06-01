@@ -1,2 +1,2 @@
-cargo build --release && cp ./target/release/nine-cron /Users/raymondnodejs20/.opens/nine-cron/bin 
+cargo build --release && codesign --force --sign - ./target/release/nine-cron && cp ./target/release/nine-cron /Users/magicfuture/.local/bin/
 

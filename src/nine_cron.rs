@@ -3,7 +3,6 @@ use std::process::{Command, Stdio};
 use std::io::{self, BufRead};
 use std::thread;
 use std::sync::mpsc::{self, Sender};
-use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use std::io::Write;
 
@@ -131,7 +130,7 @@ pub fn run_with_runner<R: Runner>(runner: &R, args: &[String]) -> i32 {
     };
     let (tx, rx) = mpsc::channel();
     let tx_opt = Some(tx.clone());
-    let run_id = Uuid::new_v4().to_string();
+    let run_id = crate::config::generate_id();
     match runner.run(&cmd, &cmd_args, tx_opt, &run_id) {
         Ok(res) => {
             let run_id = res.run_id.clone();

@@ -4,9 +4,9 @@ use tracing_subscriber;
 
 use nine_cron::{run_with_runner, SystemRunner};
 use nine_cron::config; // access config functions
-use uuid::Uuid;
 use chrono::Utc;
 mod schedule_utils;
+pub mod chat;
 
 #[derive(Parser)]
 #[command(name = "nine-cron", about = "nine-cron: local CLI scheduler. Use quoted command strings when the command contains spaces or shell characters (e.g. redirection, pipes). Examples: nine-cron run \"date > test.log\" ")]
@@ -20,7 +20,9 @@ enum Commands {
     Schedule { #[command(subcommand)] action: ScheduleAction },
     /// Run as a daemon to execute scheduled jobs.
     /// -i sets loop interval in seconds. --catch-up enables executing missed runs on startup (use with care).
-    Daemon { #[arg(short = 'i', long = "interval", help = "daemon loop interval in seconds")] interval: Option<u64>, #[arg(long = "catch-up", help = "execute missed schedules on startup (may cause many runs)")] catch_up: bool, #[arg(long = "max-catch-up", help = "maximum number of missed occurrences to run per schedule when catch-up is enabled", default_value_t = 100u32)] max_catch_up: u32 }
+    Daemon { #[arg(short = 'i', long = "interval", help = "daemon loop interval in seconds")] interval: Option<u64>, #[arg(long = "catch-up", help = "execute missed schedules on startup (may cause many runs)")] catch_up: bool, #[arg(long = "max-catch-up", help = "maximum number of missed occurrences to run per schedule when catch-up is enabled", default_value_t = 100u32)] max_catch_up: u32 },
+    /// Chat with AI to create schedules using natural language
+    Chat { #[arg(short = 't', long = "title", help = "unique session title for the chat", required=true)] title: String, #[arg(short = 'm', long = "msg", help = "your message to the AI", required_unless_present = "interactive")] msg: Option<String>, #[arg(short = 'i', long = "interactive", help = "start interactive multi-turn mode")] interactive: bool, #[arg(short = 'y', long = "yes", help = "auto accept and execute without confirmation")] yes: bool }
 }
 
 #[derive(Subcommand)]
@@ -31,7 +33,7 @@ enum ScheduleAction {
     List { #[arg(long = "json", help = "output JSONL instead of a human table")] json: bool },
     /// Search schedules by keyword in title or command. If no query provided, enter interactive prompt.
     Search { #[arg(help = "query string to search for", required = false)] query: Option<String> },
-    Remove { id: String },
+    Remove { id: Option<String>, #[arg(long = "all", help = "remove all schedules")] all: bool, #[arg(short = 'y', long = "yes", help = "skip confirmation prompt")] yes: bool },
 }
 
 fn main() {
@@ -93,7 +95,7 @@ fn main() {
                         std::process::exit(2);
                     }
                     let entry = config::ScheduleEntry {
-                        id: Uuid::new_v4().to_string(),
+                        id: config::generate_id(),
                         title: sanitized_title,
                         cmd: cmd.clone(),
                         run_at,
@@ -130,7 +132,9 @@ fn main() {
                                 // human table including cmd (truncated)
                                 println!("{:<36}  {:<20}  {:<20}  {:<10}  {}", "ID", "TITLE", "RUN_AT", "RECURRENCE", "CMD");
                                 for s in file.schedules.iter() {
-                                    let cmd_display = if s.cmd.len() > 40 { format!("{}...", &s.cmd[..37]) } else { s.cmd.clone() };
+                                    // Safe truncation for multi-byte characters
+                                    let cmd_display: String = s.cmd.chars().take(40).collect();
+                                    let cmd_display = if cmd_display.len() < s.cmd.len() { format!("{}...", cmd_display) } else { cmd_display };
                                         let run_at_hkt = s.run_at.with_timezone(&chrono_tz::Asia::Hong_Kong).format("%Y-%m-%d %H:%M:%S %Z");
                                         println!("{:<36}  {:<20}  {:<20}  {:<10}  {}", s.id, s.title, run_at_hkt, s.recurrence.clone().unwrap_or_default(), cmd_display);
                                 }
@@ -142,16 +146,50 @@ fn main() {
                 }
             }
 
-            ScheduleAction::Remove { id } => {
-                match config::load_schedules() {
-                    Ok(mut file) => {
-                        let before = file.schedules.len();
-                        file.schedules.retain(|s| s.id != id);
-                        let after = file.schedules.len();
-                        if let Err(e) = config::save_schedules(&file) { eprintln!("failed to save schedules: {:?}", e); std::process::exit(1); }
-                        if after < before { println!("removed {}", id); std::process::exit(0); } else { println!("no schedule with id {}", id); std::process::exit(2); }
+            ScheduleAction::Remove { id, all, yes } => {
+                if all {
+                    match config::load_schedules() {
+                        Ok(file) => {
+                            if file.schedules.is_empty() {
+                                println!("no schedules to remove");
+                                std::process::exit(0);
+                            }
+                            if !yes {
+                                use std::io::{stdin, stdout, Write};
+                                print!("Remove all schedules? (y/N): ");
+                                let _ = stdout().flush();
+                                let mut input = String::new();
+                                let _ = stdin().read_line(&mut input);
+                                if input.trim().to_lowercase() != "y" {
+                                    println!("cancelled");
+                                    std::process::exit(0);
+                                }
+                            }
+                            let empty = config::ScheduleFile::default();
+                            if let Err(e) = config::save_schedules(&empty) {
+                                eprintln!("failed to save schedules: {:?}", e);
+                                std::process::exit(1);
+                            }
+                            println!("removed all schedules");
+                            std::process::exit(0);
+                        }
+                        Err(e) => { eprintln!("failed to load schedules: {:?}", e); std::process::exit(1); }
                     }
-                    Err(e) => { eprintln!("failed to load schedules: {:?}", e); std::process::exit(1); }
+                } else {
+                    let id = match id {
+                        Some(id) => id,
+                        None => { eprintln!("no schedule id provided (use --all to remove all)"); std::process::exit(2); }
+                    };
+                    match config::load_schedules() {
+                        Ok(mut file) => {
+                            let before = file.schedules.len();
+                            file.schedules.retain(|s| s.id != id);
+                            let after = file.schedules.len();
+                            if let Err(e) = config::save_schedules(&file) { eprintln!("failed to save schedules: {:?}", e); std::process::exit(1); }
+                            if after < before { println!("removed {}", id); std::process::exit(0); } else { println!("no schedule with id {}", id); std::process::exit(2); }
+                        }
+                        Err(e) => { eprintln!("failed to load schedules: {:?}", e); std::process::exit(1); }
+                    }
                 }
             }
 
@@ -182,6 +220,15 @@ fn main() {
                 }
             }
         },
+
+        Commands::Chat { title, msg, interactive, yes } => {
+            let msg_str = msg.unwrap_or_default();
+            if let Err(e) = chat::run_chat(&title, &msg_str, interactive, yes) {
+                eprintln!("chat error: {:?}", e);
+                std::process::exit(1);
+            }
+            std::process::exit(0);
+        }
 
         Commands::Daemon { interval, catch_up, max_catch_up } => {
             let it = interval.unwrap_or(10);
