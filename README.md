@@ -79,6 +79,28 @@ Quickstart
 ./target/release/nine-cron schedule remove --all -y
 ```
 
+Chat with AI
+
+Use natural language to create schedules with the AI-powered chat interface:
+
+```bash
+# Single message
+./target/release/nine-cron chat --title "task-name" --msg "remind me to call mom every Tuesday at 9am"
+
+# Interactive mode (multi-turn conversation)
+./target/release/nine-cron chat --title "task-name" --interactive
+
+# Auto-accept without confirmation
+./target/release/nine-cron chat --title "task-name" --msg "run backup every night at 2am" -y
+```
+
+The chat feature:
+- Uses AI to understand natural language and create schedules
+- Supports relative time: "remind me after 2 hours", "3 days later"
+- Automatically generates `opencb send` commands for reminders
+- Maintains conversation context in interactive mode
+- Intent patterns stored in `~/.config/nine-cron/chats/intentions/`
+
 Daemon behaviour and logs
 
 - The daemon runs a polling loop and executes scheduled jobs when due. It does not continuously print per-job logs to stdout. This avoids noisy console output when running as a background service.
