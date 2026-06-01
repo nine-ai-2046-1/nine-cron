@@ -22,7 +22,7 @@ enum Commands {
     /// -i sets loop interval in seconds. --catch-up enables executing missed runs on startup (use with care).
     Daemon { #[arg(short = 'i', long = "interval", help = "daemon loop interval in seconds")] interval: Option<u64>, #[arg(long = "catch-up", help = "execute missed schedules on startup (may cause many runs)")] catch_up: bool, #[arg(long = "max-catch-up", help = "maximum number of missed occurrences to run per schedule when catch-up is enabled", default_value_t = 100u32)] max_catch_up: u32 },
     /// Chat with AI to create schedules using natural language
-    Chat { #[arg(short = 't', long = "title", help = "unique session title for the chat", required=true)] title: String, #[arg(short = 'm', long = "msg", help = "your message to the AI", required_unless_present = "interactive")] msg: Option<String>, #[arg(short = 'i', long = "interactive", help = "start interactive multi-turn mode")] interactive: bool, #[arg(short = 'y', long = "yes", help = "auto accept and execute without confirmation")] yes: bool }
+    Chat { #[arg(short = 't', long = "title", help = "unique session title for the chat (auto-generated if not provided)")] title: Option<String>, #[arg(short = 'm', long = "msg", help = "your message to the AI", required_unless_present = "interactive")] msg: Option<String>, #[arg(short = 'i', long = "interactive", help = "start interactive multi-turn mode")] interactive: bool, #[arg(short = 'y', long = "yes", help = "auto accept and execute without confirmation")] yes: bool }
 }
 
 #[derive(Subcommand)]
@@ -223,7 +223,7 @@ fn main() {
 
         Commands::Chat { title, msg, interactive, yes } => {
             let msg_str = msg.unwrap_or_default();
-            if let Err(e) = chat::run_chat(&title, &msg_str, interactive, yes) {
+            if let Err(e) = chat::run_chat(title.as_deref(), &msg_str, interactive, yes) {
                 eprintln!("chat error: {:?}", e);
                 std::process::exit(1);
             }

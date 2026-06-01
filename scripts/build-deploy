@@ -1,2 +1,2 @@
-cargo build --release && codesign --force --sign - ./target/release/nine-cron && cp ./target/release/nine-cron /Users/magicfuture/.local/bin/
+cargo build --release && cp ./target/release/nine-cron $HOME/.local/bin/ && codesign --force --sign - $HOME/.local/bin/nine-cron
 

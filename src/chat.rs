@@ -81,11 +81,11 @@ If user message matches an intention pattern:
   "action": "schedule_add",
   "needs_clarification": false,
   "clarification_question": null,
+  "title": "descriptive-title",
   "params": {{
     "time": "HH:MM",
     "date": "YYYY-MM-DD or null",
     "recurrence": "recurrence token or null",
-    "title": "descriptive-title",
     "cmd": "command to run"
   }}
 }}
@@ -97,14 +97,20 @@ If user message is ambiguous or missing info:
   "action": "schedule_add",
   "needs_clarification": true,
   "clarification_question": "What clarification is needed?",
+  "title": null,
   "params": null
 }}
 ```
 
+## Title Rules
+- You MUST always generate a title for the schedule
+- Title: alphanumeric and hyphens only, max 20 chars, descriptive
+- Derive from the action/command (e.g., "drink-water", "daily-meeting", "card-renewal")
+- This title is used as session ID and schedule title
+
 ## Parameter Rules
 - time: 24-hour format HH:MM
 - recurrence: "Nd" (days), "Nh" (hours), "Nm" (minutes), null for one-time
-- title: alphanumeric and hyphens only, max 20 chars, descriptive
 - cmd: exact command to execute
 - date: ALWAYS use the current year ({today_year}) when user mentions a date without year
 
@@ -137,6 +143,7 @@ pub struct ChatResponse {
     pub action: String,
     pub needs_clarification: bool,
     pub clarification_question: Option<String>,
+    pub title: Option<String>,
     pub params: Option<ScheduleParams>,
 }
 
@@ -330,7 +337,7 @@ fn execute_schedule_add(params: &ScheduleParams) -> Result<()> {
     Ok(())
 }
 
-fn process_message(model: &str, session: &str, msg: &str) -> Result<Option<ScheduleParams>> {
+fn process_message(model: &str, session: &str, msg: &str) -> Result<Option<(String, ScheduleParams)>> {
     let response_raw = call_nine_poe(model, session, msg)?;
     let response = parse_chat_response(&response_raw)?;
 
@@ -342,7 +349,13 @@ fn process_message(model: &str, session: &str, msg: &str) -> Result<Option<Sched
     }
 
     match response.params {
-        Some(p) => Ok(Some(p)),
+        Some(p) => {
+            // Use top-level title, or fallback to params.title, or "untitled"
+            let title = response.title
+                .or_else(|| Some(p.title.clone()))
+                .unwrap_or_else(|| "untitled".to_string());
+            Ok(Some((title, p)))
+        }
         None => {
             print_ai_msg("I couldn't understand the scheduling request. Please try again with more details.");
             Ok(None)
@@ -350,33 +363,47 @@ fn process_message(model: &str, session: &str, msg: &str) -> Result<Option<Sched
     }
 }
 
-pub fn run_chat(title: &str, msg: &str, interactive: bool, auto_yes: bool) -> Result<()> {
+pub fn run_chat(title: Option<&str>, msg: &str, interactive: bool, auto_yes: bool) -> Result<()> {
     let chat_config = config::load_chat_config()?;
     let model = &chat_config.model;
 
     if interactive {
-        run_interactive(title, model)
+        let session_title = title.unwrap_or("chat-session");
+        run_interactive(session_title, model)
     } else if msg.is_empty() {
         eprintln!("Error: --msg is required when not using --interactive mode");
-        eprintln!("Usage: nine-cron chat --title \"{}\" --msg \"your message\"", title);
-        eprintln!("   or: nine-cron chat --title \"{}\" --interactive", title);
+        eprintln!("Usage: nine-cron chat --msg \"your message\"");
+        eprintln!("   or: nine-cron chat --title \"my-task\" --msg \"your message\"");
+        eprintln!("   or: nine-cron chat --interactive");
         std::process::exit(1);
     } else {
         run_single(title, msg, model, auto_yes)
     }
 }
 
-fn run_single(title: &str, msg: &str, model: &str, auto_yes: bool) -> Result<()> {
-    print_header(title);
+fn run_single(title: Option<&str>, msg: &str, model: &str, auto_yes: bool) -> Result<()> {
+    let session_title = title.unwrap_or("chat-session");
+    print_header(session_title);
     print_user_msg(msg);
 
-    match process_message(model, title, msg)? {
-        Some(params) => {
-            let cmd = build_schedule_command(&params);
+    match process_message(model, session_title, msg)? {
+        Some((ai_title, params)) => {
+            // Use AI-generated title if no title was provided
+            let final_title = if title.is_none() {
+                crate::schedule_utils::sanitize_title(&ai_title)
+            } else {
+                ai_title.clone()
+            };
+
+            // Update params with final title
+            let mut final_params = params;
+            final_params.title = final_title.clone();
+
+            let cmd = build_schedule_command(&final_params);
             print_command(&cmd);
 
             if auto_yes {
-                execute_schedule_add(&params)?;
+                execute_schedule_add(&final_params)?;
             } else {
                 println!("  {}Execute? (y/N): {}", YELLOW, RESET);
                 io::stdout().flush()?;
@@ -387,7 +414,7 @@ fn run_single(title: &str, msg: &str, model: &str, auto_yes: bool) -> Result<()>
 
                 match answer.as_str() {
                     "y" | "yes" => {
-                        execute_schedule_add(&params)?;
+                        execute_schedule_add(&final_params)?;
                     }
                     _ => {
                         println!("  {}{}Cancelled.{}", DIM, RESET, RESET);
@@ -397,7 +424,11 @@ fn run_single(title: &str, msg: &str, model: &str, auto_yes: bool) -> Result<()>
         }
         None => {
             println!("  {}Provide more details with:{}", DIM, RESET);
-            println!("  {}  nine-cron chat --title \"{}\" --msg \"<your response>\"{}", DIM, title, RESET);
+            if let Some(t) = title {
+                println!("  {}  nine-cron chat --title \"{}\" --msg \"<your response>\"{}", DIM, t, RESET);
+            } else {
+                println!("  {}  nine-cron chat --msg \"<your response>\"{}", DIM, RESET);
+            }
         }
     }
 
@@ -468,8 +499,18 @@ fn run_interactive(title: &str, model: &str) -> Result<()> {
         print_user_msg(&input);
 
         match process_message(model, title, &input)? {
-            Some(params) => {
-                let cmd = build_schedule_command(&params);
+            Some((ai_title, params)) => {
+                // Use session title if already set, otherwise use AI-generated title
+                let final_title = if title != "chat-session" {
+                    title.to_string()
+                } else {
+                    crate::schedule_utils::sanitize_title(&ai_title)
+                };
+
+                let mut final_params = params;
+                final_params.title = final_title.clone();
+
+                let cmd = build_schedule_command(&final_params);
                 print_command(&cmd);
 
                 print!("  {}Execute? (y/N/modify): {}", YELLOW, RESET);
@@ -481,7 +522,7 @@ fn run_interactive(title: &str, model: &str) -> Result<()> {
 
                 match confirm.as_str() {
                     "y" | "yes" => {
-                        execute_schedule_add(&params)?;
+                        execute_schedule_add(&final_params)?;
                     }
                     "modify" => {
                         println!("  {}Enter modifications:{}", CYAN, RESET);
@@ -494,8 +535,11 @@ fn run_interactive(title: &str, model: &str) -> Result<()> {
                         if !modified.is_empty() {
                             print_user_msg(&modified);
                             match process_message(model, title, &modified)? {
-                                Some(new_params) => {
-                                    let new_cmd = build_schedule_command(&new_params);
+                                Some((_new_ai_title, new_params)) => {
+                                    let mut final_new_params = new_params;
+                                    final_new_params.title = final_title.clone();
+
+                                    let new_cmd = build_schedule_command(&final_new_params);
                                     print_command(&new_cmd);
 
                                     print!("  {}Execute? (y/N): {}", YELLOW, RESET);
@@ -505,7 +549,7 @@ fn run_interactive(title: &str, model: &str) -> Result<()> {
                                     reader.read_line(&mut confirm2)?;
 
                                     if confirm2.trim().to_lowercase() == "y" {
-                                        execute_schedule_add(&new_params)?;
+                                        execute_schedule_add(&final_new_params)?;
                                     } else {
                                         println!("  {}{}Cancelled.{}", DIM, RESET, RESET);
                                     }
