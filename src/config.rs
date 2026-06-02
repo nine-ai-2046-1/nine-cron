@@ -55,6 +55,14 @@ fn config_path() -> anyhow::Result<PathBuf> {
 pub fn load_schedules() -> anyhow::Result<ScheduleFile> {
     let path = config_path()?;
     if !path.exists() {
+        // Create a default TOML file that contains both schedules (empty) and chat (with default model)
+        let mut full: toml::value::Table = toml::value::Table::new();
+        full.insert("schedules".to_string(), toml::Value::Array(vec![]));
+        let mut chat_tbl = toml::value::Table::new();
+        chat_tbl.insert("model".to_string(), toml::Value::String(ChatConfig::default().model));
+        full.insert("chat".to_string(), toml::Value::Table(chat_tbl));
+        let tom = toml::to_string_pretty(&toml::Value::Table(full))?;
+        fs::write(&path, tom)?;
         return Ok(ScheduleFile::default());
     }
     let s = fs::read_to_string(&path)?;
@@ -66,7 +74,15 @@ pub fn load_schedules() -> anyhow::Result<ScheduleFile> {
             eprintln!("warning: schedules file uses older format or is missing fields: {:?}", e);
             // Fallback: parse as TOML value and attempt a resilient migration
             let v: toml::Value = toml::from_str(&s).map_err(|e| anyhow::anyhow!(e))?;
-            let tables = v.get("schedules").and_then(|t| t.as_array()).ok_or_else(|| anyhow::anyhow!("invalid legacy schedules format"))?;
+            // If the file simply doesn't contain schedules, treat as empty schedule file
+            let tables_opt = v.get("schedules").and_then(|t| t.as_array());
+            let tables = match tables_opt {
+                Some(t) => t,
+                None => {
+                    // no schedules key -> return empty ScheduleFile
+                    return Ok(ScheduleFile::default());
+                }
+            };
             let mut new = ScheduleFile::default();
             let mut skipped: Vec<String> = Vec::new();
             for item in tables.iter() {
@@ -122,10 +138,15 @@ pub fn save_schedules(file: &ScheduleFile) -> anyhow::Result<()> {
 pub fn load_chat_config() -> anyhow::Result<ChatConfig> {
     let path = config_path()?;
     if !path.exists() {
-        let default_config = AppConfig::default();
-        let tom = toml::to_string_pretty(&default_config)?;
+        // create a default TOML file containing both schedules and chat sections
+        let mut full: toml::value::Table = toml::value::Table::new();
+        full.insert("schedules".to_string(), toml::Value::Array(vec![]));
+        let mut chat_tbl = toml::value::Table::new();
+        chat_tbl.insert("model".to_string(), toml::Value::String(ChatConfig::default().model));
+        full.insert("chat".to_string(), toml::Value::Table(chat_tbl));
+        let tom = toml::to_string_pretty(&toml::Value::Table(full))?;
         fs::write(&path, tom)?;
-        return Ok(default_config.chat);
+        return Ok(AppConfig::default().chat);
     }
 
     let s = fs::read_to_string(&path)?;

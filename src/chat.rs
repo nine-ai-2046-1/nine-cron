@@ -194,18 +194,23 @@ fn call_nine_poe(model: &str, session: &str, msg: &str) -> Result<String> {
 }
 
 fn parse_chat_response(raw: &str) -> Result<ChatResponse> {
-    let json_str = if let Some(start) = raw.find('{') {
-        if let Some(end) = raw.rfind('}') {
-            &raw[start..=end]
-        } else {
-            raw
+    // Use the new chat-parser crate to robustly parse and normalize AI responses.
+    match chat_parser::parse_and_normalize(raw) {
+        Ok(norm) => {
+            // Convert NormalizedChatResponse -> ChatResponse
+            let params = norm.params.map(|p| ScheduleParams { time: p.time, date: p.date, recurrence: p.recurrence, title: p.title.unwrap_or_else(|| "untitled".to_string()), cmd: p.cmd });
+            Ok(ChatResponse {
+                action: norm.action.unwrap_or_else(|| "".to_string()),
+                needs_clarification: norm.needs_clarification,
+                clarification_question: norm.clarification_question,
+                title: norm.title,
+                params,
+            })
         }
-    } else {
-        raw
-    };
-
-    serde_json::from_str(json_str)
-        .map_err(|e| anyhow!("Failed to parse AI response as JSON: {}\nRaw response: {}", e, raw))
+        Err(e) => {
+            return Err(anyhow!("Failed to parse AI response as JSON: {}\nRaw response: {}", e, raw));
+        }
+    }
 }
 
 fn build_schedule_command(params: &ScheduleParams) -> String {
