@@ -368,7 +368,7 @@ fn process_message(model: &str, session: &str, msg: &str) -> Result<Option<(Stri
     }
 }
 
-pub fn run_chat(title: Option<&str>, msg: &str, interactive: bool, auto_yes: bool) -> Result<()> {
+pub fn run_chat(title: Option<&str>, msg: &str, interactive: bool, auto_yes: bool, silent: bool) -> Result<()> {
     let chat_config = config::load_chat_config()?;
     let model = &chat_config.model;
 
@@ -382,14 +382,16 @@ pub fn run_chat(title: Option<&str>, msg: &str, interactive: bool, auto_yes: boo
         eprintln!("   or: nine-cron chat --interactive");
         std::process::exit(1);
     } else {
-        run_single(title, msg, model, auto_yes)
+        run_single(title, msg, model, auto_yes, silent)
     }
 }
 
-fn run_single(title: Option<&str>, msg: &str, model: &str, auto_yes: bool) -> Result<()> {
+fn run_single(title: Option<&str>, msg: &str, model: &str, auto_yes: bool, silent: bool) -> Result<()> {
     let session_title = title.unwrap_or("chat-session");
-    print_header(session_title);
-    print_user_msg(msg);
+    if !silent {
+        print_header(session_title);
+        print_user_msg(msg);
+    }
 
     match process_message(model, session_title, msg)? {
         Some((ai_title, params)) => {
@@ -405,7 +407,9 @@ fn run_single(title: Option<&str>, msg: &str, model: &str, auto_yes: bool) -> Re
             final_params.title = final_title.clone();
 
             let cmd = build_schedule_command(&final_params);
-            print_command(&cmd);
+            if !silent {
+                print_command(&cmd);
+            }
 
             if auto_yes {
                 execute_schedule_add(&final_params)?;
@@ -428,16 +432,20 @@ fn run_single(title: Option<&str>, msg: &str, model: &str, auto_yes: bool) -> Re
             }
         }
         None => {
-            println!("  {}Provide more details with:{}", DIM, RESET);
-            if let Some(t) = title {
-                println!("  {}  nine-cron chat --title \"{}\" --msg \"<your response>\"{}", DIM, t, RESET);
-            } else {
-                println!("  {}  nine-cron chat --msg \"<your response>\"{}", DIM, RESET);
+            if !silent {
+                println!("  {}Provide more details with:{}", DIM, RESET);
+                if let Some(t) = title {
+                    println!("  {}  nine-cron chat --title \"{}\" --msg \"<your response>\"{}", DIM, t, RESET);
+                } else {
+                    println!("  {}  nine-cron chat --msg \"<your response>\"{}", DIM, RESET);
+                }
             }
         }
     }
 
-    println!();
+    if !silent {
+        println!();
+    }
     Ok(())
 }
 
